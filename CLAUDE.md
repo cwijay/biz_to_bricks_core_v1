@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **biz2bricks-core** is a shared Python library for Biz2Bricks applications providing:
 - SQLAlchemy 2.0 async models for PostgreSQL
 - DatabaseManager for async connections (Cloud SQL + direct)
-- Alembic migrations
+- Auto table creation on first DB access
 - UsageService for storage/token tracking and limit enforcement
 
 This library is consumed by:
@@ -20,18 +20,6 @@ This library is consumed by:
 ```bash
 uv sync                    # Install dependencies
 uv sync --all-extras       # Install with dev dependencies
-```
-
-### Running Migrations
-```bash
-# Create new migration
-uv run alembic revision --autogenerate -m "description"
-
-# Apply migrations
-uv run alembic upgrade head
-
-# Downgrade
-uv run alembic downgrade -1
 ```
 
 ### Linting and Formatting
@@ -72,6 +60,7 @@ src/biz2bricks_core/
 **DatabaseManager** (`db/connection.py`):
 - Singleton with per-event-loop resource management
 - Supports Cloud SQL Python Connector (production) and direct URLs (local)
+- Auto-creates tables from models on first DB access
 - Use `async with db.session() as session:` for database operations
 - Use `get_session()` as FastAPI dependency
 

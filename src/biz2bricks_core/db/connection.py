@@ -39,6 +39,7 @@ class DatabaseManager:
     _instance: Optional["DatabaseManager"] = None
     _initialized: bool = False
     _shutdown: bool = False
+    _tables_created: bool = False  # Track if tables have been created (once per process)
 
     # Per-loop resources: maps loop_id -> resource
     _connectors: Dict[int, Any] = {}
@@ -95,6 +96,26 @@ class DatabaseManager:
             f"Database engine initialized for loop {loop_id}: "
             f"pool_size={db_config.DB_POOL_SIZE}, connection={connection_type}"
         )
+
+        # Create tables on first engine setup
+        if not self._tables_created:
+            await self._ensure_tables()
+
+    async def _ensure_tables(self) -> None:
+        """Create all tables from model definitions if they don't exist."""
+        if self._tables_created:
+            return
+
+        from biz2bricks_core.models import Base
+
+        loop_id = self._get_loop_id()
+        engine = self._engines[loop_id]
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        self._tables_created = True
+        logger.info("Database tables created/verified")
 
     async def _create_cloud_sql_engine_async(self) -> Tuple[AsyncEngine, Any]:
         """Create engine and connector for Cloud SQL."""
