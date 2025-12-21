@@ -3,6 +3,7 @@ Biz2Bricks Core Library.
 
 Shared components for Biz2Bricks applications:
 - SQLAlchemy models (organizations, users, folders, documents, audit_logs)
+- AI processing models (processing_jobs, document_generations, memory, RAG)
 - DatabaseManager for async PostgreSQL connections (Cloud SQL + direct)
 - Alembic migrations for schema management
 - UsageService for usage tracking and limit enforcement
@@ -20,6 +21,14 @@ from biz2bricks_core.models import (
     AuditLogModel,
     AuditAction,
     AuditEntityType,
+    # AI processing models
+    ProcessingJobModel,
+    DocumentGenerationModel,
+    UserPreferenceModel,
+    ConversationSummaryModel,
+    MemoryEntryModel,
+    FileSearchStoreModel,
+    DocumentFolderModel,
 )
 from biz2bricks_core.models.usage import (
     SubscriptionPlanModel,
@@ -48,6 +57,14 @@ __all__ = [
     "AuditLogModel",
     "AuditAction",
     "AuditEntityType",
+    # AI Processing Models
+    "ProcessingJobModel",
+    "DocumentGenerationModel",
+    "UserPreferenceModel",
+    "ConversationSummaryModel",
+    "MemoryEntryModel",
+    "FileSearchStoreModel",
+    "DocumentFolderModel",
     # Usage Models
     "SubscriptionPlanModel",
     "UsageEventModel",

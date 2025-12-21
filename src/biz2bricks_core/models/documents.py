@@ -53,6 +53,17 @@ class DocumentModel(Base):
         nullable=False,
     )
 
+    # AI Processing columns
+    file_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )  # SHA-256 content hash for deduplication
+    parsed_path: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # Path to parsed .md file in GCS
+    parsed_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )  # When document was parsed
+
     # Relationships
     organization: Mapped["OrganizationModel"] = relationship(back_populates="documents")
 
@@ -68,6 +79,7 @@ class DocumentModel(Base):
         Index("idx_documents_filename", "filename"),
         Index("idx_documents_org_filename", "organization_id", "filename"),
         Index("idx_documents_uploaded_by", "uploaded_by"),
+        Index("idx_documents_file_hash", "file_hash"),
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -85,6 +97,9 @@ class DocumentModel(Base):
             "uploaded_by": self.uploaded_by,
             "is_active": self.is_active,
             "metadata": self.doc_metadata,
+            "file_hash": self.file_hash,
+            "parsed_path": self.parsed_path,
+            "parsed_at": self.parsed_at.isoformat() if self.parsed_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -117,6 +132,20 @@ class AuditLogModel(Base):
         TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
     )
 
+    # AI Processing audit columns
+    event_type: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )  # AI event type (e.g., "document_parsed", "summary_generated")
+    document_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )  # SHA-256 hash of document being processed
+    file_name: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )  # Filename for display
+    job_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("processing_jobs.id", ondelete="SET NULL"), nullable=True
+    )  # Reference to processing job
+
     # Relationships
     organization: Mapped["OrganizationModel"] = relationship()
 
@@ -138,6 +167,11 @@ class AuditLogModel(Base):
             "user_id",
             "created_at",
         ),
+        # AI processing indexes
+        Index("idx_audit_logs_event_type", "event_type"),
+        Index("idx_audit_logs_document_hash", "document_hash"),
+        Index("idx_audit_logs_file_name", "file_name"),
+        Index("idx_audit_logs_job_id", "job_id"),
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -153,5 +187,9 @@ class AuditLogModel(Base):
             "ip_address": self.ip_address,
             "session_id": self.session_id,
             "user_agent": self.user_agent,
+            "event_type": self.event_type,
+            "document_hash": self.document_hash,
+            "file_name": self.file_name,
+            "job_id": self.job_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -14,6 +14,15 @@ Usage tracking tables:
 - UsageLimits: Organization limits and credits
 - ModelPricing: LLM model pricing lookup
 - SubscriptionPlans: Tiered pricing plans
+
+AI processing tables:
+- ProcessingJobs: Document processing job tracking
+- DocumentGenerations: Generated content cache (summaries, FAQs, questions)
+- UserPreferences: User preferences for long-term memory
+- ConversationSummaries: Conversation summaries for memory
+- MemoryEntries: Generic key-value memory storage
+- FileSearchStores: Gemini File Search store registry
+- DocumentFolders: Document folder hierarchy for RAG
 """
 
 from biz2bricks_core.models.base import Base, AuditAction, AuditEntityType
@@ -25,6 +34,15 @@ from biz2bricks_core.models.usage import (
     UsageLimitsModel,
     ModelPricingModel,
     SubscriptionPlanModel,
+)
+from biz2bricks_core.models.ai import (
+    ProcessingJobModel,
+    DocumentGenerationModel,
+    UserPreferenceModel,
+    ConversationSummaryModel,
+    MemoryEntryModel,
+    FileSearchStoreModel,
+    DocumentFolderModel,
 )
 
 __all__ = [
@@ -45,4 +63,12 @@ __all__ = [
     "UsageLimitsModel",
     "ModelPricingModel",
     "SubscriptionPlanModel",
+    # AI processing models
+    "ProcessingJobModel",
+    "DocumentGenerationModel",
+    "UserPreferenceModel",
+    "ConversationSummaryModel",
+    "MemoryEntryModel",
+    "FileSearchStoreModel",
+    "DocumentFolderModel",
 ]
