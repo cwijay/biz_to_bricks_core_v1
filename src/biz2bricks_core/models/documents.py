@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import String, Text, BigInteger, Boolean, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from biz2bricks_core.models.base import Base
@@ -143,7 +143,7 @@ class AuditLogModel(Base):
         String(255), nullable=True
     )  # Filename for display
     job_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("processing_jobs.id", ondelete="SET NULL"), nullable=True
+        PG_UUID(as_uuid=False), ForeignKey("processing_jobs.id", ondelete="SET NULL"), nullable=True
     )  # Reference to processing job
 
     # Relationships

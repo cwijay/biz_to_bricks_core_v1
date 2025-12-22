@@ -5,8 +5,8 @@ Shared core library for Biz2Bricks applications providing SQLAlchemy models, dat
 ## Features
 
 - **SQLAlchemy 2.0 Async Models** - Multi-tenant models for organizations, users, folders, documents, and audit logs
-- **DatabaseManager** - Async PostgreSQL connection manager with Cloud SQL Python Connector support
-- **Alembic Migrations** - Database schema management with async migration support
+- **AI Processing Models** - Document processing jobs, generation caching, long-term memory, and RAG support
+- **DatabaseManager** - Async PostgreSQL connection manager with Cloud SQL Python Connector support and auto table creation
 - **UsageService** - Storage and token usage tracking with limit enforcement
 
 ## Installation
@@ -80,11 +80,17 @@ async def list_orgs(session: AsyncSession = Depends(get_session)):
 
 ```python
 from biz2bricks_core import (
+    # Core models
     OrganizationModel,
     UserModel,
     FolderModel,
     DocumentModel,
     AuditLogModel,
+    # AI processing models
+    ProcessingJobModel,
+    DocumentGenerationModel,
+    MemoryEntryModel,
+    FileSearchStoreModel,
 )
 
 # Create an organization
@@ -125,22 +131,6 @@ await usage_service.log_token_usage(
 )
 ```
 
-## Database Migrations
-
-```bash
-# Apply all migrations
-uv run alembic upgrade head
-
-# Create a new migration
-uv run alembic revision --autogenerate -m "add new column"
-
-# Downgrade one version
-uv run alembic downgrade -1
-
-# Show current version
-uv run alembic current
-```
-
 ## Development
 
 ### Running Tests
@@ -173,19 +163,106 @@ biz2bricks_core/
 │   ├── __init__.py           # Public API
 │   ├── db/
 │   │   ├── config.py         # Database configuration
-│   │   └── connection.py     # DatabaseManager
+│   │   └── connection.py     # DatabaseManager (auto-creates tables)
 │   ├── models/
 │   │   ├── base.py           # Base class, enums
 │   │   ├── core.py           # Organization, User, Folder
 │   │   ├── documents.py      # Document, AuditLog
-│   │   └── usage.py          # Usage tracking models
+│   │   ├── usage.py          # Usage tracking models
+│   │   └── ai.py             # AI processing models
 │   └── services/
 │       └── usage_service.py  # UsageService
-├── migrations/
-│   ├── env.py                # Alembic environment
-│   └── versions/             # Migration scripts
-├── alembic.ini
+├── tests/
 └── pyproject.toml
+```
+
+## Database Schema
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              MULTI-TENANT ARCHITECTURE                              │
+│                    All tables scoped by organization_id (tenant)                    │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                           ┌────────────────────────┐
+                           │   subscription_plans   │ (Standalone)
+                           ├────────────────────────┤
+                           │ id              (PK)   │
+                           │ name                   │
+                           │ monthly_token_limit    │
+                           │ max_storage_mb         │
+                           └───────────┬────────────┘
+                                       │ 1
+                                       │
+                                       ▼ N
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                                   organizations                                       │
+│                              (Multi-Tenant Root Entity)                              │
+├──────────────────────────────────────────────────────────────────────────────────────┤
+│ id (PK) │ name │ domain │ plan_type │ plan_id (FK) │ subscription_status │ settings │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+      │
+      │ 1:N relationships to all tenant-scoped tables
+      │
+      ├─────────────────┬─────────────────┬─────────────────┬─────────────────┐
+      │                 │                 │                 │                 │
+      ▼ N               ▼ N               ▼ N               ▼ 1               ▼ 1
+┌───────────┐    ┌───────────┐    ┌───────────┐    ┌──────────────┐   ┌─────────────────┐
+│   users   │    │  folders  │    │ documents │    │ usage_limits │   │file_search_stores│
+├───────────┤    ├───────────┤    ├───────────┤    ├──────────────┤   ├─────────────────┤
+│ id   (PK) │    │ id   (PK) │    │ id   (PK) │    │ id      (PK) │   │ id         (PK) │
+│ org_id    │    │ org_id    │    │ org_id    │    │ org_id  (UQ) │   │ org_id     (UQ) │
+│ email     │    │ name      │    │ filename  │    │ storage_used │   │ gemini_store_id │
+│ role      │    │ parent_id ├──┐ │ file_hash │    │ credit_used  │   └────────┬────────┘
+└───────────┘    └───────────┘  │ │ parsed_at │    └──────────────┘            │
+                      ▲         │ └───────────┘                                │ 1
+                      └─────────┘                                              │
+                    (self-reference)                                           ▼ N
+                                                                    ┌─────────────────┐
+                                                                    │document_folders │
+                                                                    ├─────────────────┤
+                                                                    │ id         (PK) │
+                                                                    │ org_id          │
+                                                                    │ store_id   (FK) │
+                                                                    │ folder_name     │
+                                                                    │ parent_id  ─────┼──┐
+                                                                    └─────────────────┘  │
+                                                                          ▲              │
+                                                                          └──────────────┘
+                                                                        (self-reference)
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              AI PROCESSING TABLES                                    │
+│                         (All scoped by organization_id)                             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+organizations ──1:N──► processing_jobs        (Document processing with caching)
+              ──1:N──► document_generations   (Cached summaries, FAQs, questions)
+              ──1:N──► user_preferences       (User generation settings)
+              ──1:N──► conversation_summaries (Agent long-term memory)
+              ──1:N──► memory_entries         (Generic key-value storage)
+              ──1:N──► audit_logs ──N:1──► processing_jobs (optional FK)
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              USAGE & BILLING TABLES                                  │
+│                         (All scoped by organization_id)                             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+organizations ──1:N──► usage_events        (Individual LLM API calls)
+              ──1:N──► usage_daily_summary (Aggregated daily rollups)
+              ──1:1──► usage_limits        (Limits, credits, storage tracking)
+
+model_pricing (Standalone) ── LLM pricing lookup by provider/model
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                  KEY CONSTRAINTS                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+• PK  = Primary Key (UUID string)
+• FK  = Foreign Key (CASCADE on delete)
+• UQ  = Unique constraint (1:1 relationship)
+• All FKs to organizations use ON DELETE CASCADE
+• usage_limits.org_id and file_search_stores.org_id are unique (one per org)
 ```
 
 ## Models Overview
@@ -197,16 +274,28 @@ biz2bricks_core/
 | `OrganizationModel` | Multi-tenant organization with plan/subscription |
 | `UserModel` | Users scoped to organization |
 | `FolderModel` | Hierarchical folder structure |
-| `DocumentModel` | Document metadata (files stored in GCS) |
-| `AuditLogModel` | Audit trail for compliance |
+| `DocumentModel` | Document metadata (files in GCS) with AI fields (`file_hash`, `parsed_path`, `parsed_at`) |
+| `AuditLogModel` | Audit trail for compliance with AI event tracking |
+
+### AI Processing Models
+
+| Model | Description |
+|-------|-------------|
+| `ProcessingJobModel` | Document processing tasks with result caching |
+| `DocumentGenerationModel` | Generated content cache (summaries, FAQs, questions) |
+| `UserPreferenceModel` | User preferences for generation settings |
+| `ConversationSummaryModel` | Long-term memory for agent conversations |
+| `MemoryEntryModel` | Generic namespace-based key-value storage |
+| `FileSearchStoreModel` | Gemini File Search store registry (one per org) |
+| `DocumentFolderModel` | Folder hierarchy within RAG stores |
 
 ### Usage Models
 
 | Model | Description |
 |-------|-------------|
-| `SubscriptionPlanModel` | Tiered pricing plans |
+| `SubscriptionPlanModel` | Tiered pricing plans (Free, Starter, Pro, Business) |
 | `UsageEventModel` | Individual LLM API call records |
-| `UsageDailySummaryModel` | Daily aggregated usage |
+| `UsageDailySummaryModel` | Daily aggregated usage for billing |
 | `UsageLimitsModel` | Organization limits and credits |
 | `ModelPricingModel` | LLM model pricing lookup |
 
