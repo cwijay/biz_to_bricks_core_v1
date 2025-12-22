@@ -141,6 +141,33 @@ uv run pytest -v              # Verbose
 uv run pytest -k "test_name"  # Run specific test
 ```
 
+### Database Migrations
+
+This project uses [Alembic](https://alembic.sqlalchemy.org/) for database schema migrations with async PostgreSQL support.
+
+```bash
+# Apply all pending migrations
+uv run alembic upgrade head
+
+# Rollback the last migration
+uv run alembic downgrade -1
+
+# Create a new migration (auto-detects model changes)
+uv run alembic revision --autogenerate -m "Add new column"
+
+# Show current migration state
+uv run alembic current
+
+# Show migration history
+uv run alembic history
+```
+
+**Notes:**
+- Migrations are stored in `alembic/versions/`
+- The initial migration (`001`) creates all tables for the complete schema
+- `env.py` automatically loads `DATABASE_URL` from your `.env` file
+- Always run `alembic upgrade head` on new deployments before starting the application
+
 ### Code Quality
 
 ```bash
@@ -159,11 +186,15 @@ uv run mypy src
 
 ```
 biz2bricks_core/
+├── alembic/                  # Database migrations
+│   ├── env.py                # Async migration environment
+│   └── versions/             # Migration scripts
+├── alembic.ini               # Alembic configuration
 ├── src/biz2bricks_core/
 │   ├── __init__.py           # Public API
 │   ├── db/
 │   │   ├── config.py         # Database configuration
-│   │   └── connection.py     # DatabaseManager (auto-creates tables)
+│   │   └── connection.py     # DatabaseManager
 │   ├── models/
 │   │   ├── base.py           # Base class, enums
 │   │   ├── core.py           # Organization, User, Folder

@@ -26,25 +26,37 @@ uv run mypy src               # Type check (strict mode)
 uv run pytest                 # Run all tests
 uv run pytest -x              # Stop on first failure
 uv run pytest -k "test_name"  # Run specific test
+
+# Database migrations (Alembic)
+uv run alembic upgrade head                        # Apply all migrations
+uv run alembic downgrade -1                        # Rollback last migration
+uv run alembic revision --autogenerate -m "desc"   # Create new migration
+uv run alembic current                             # Show current revision
+uv run alembic history                             # Show migration history
 ```
 
 ## Architecture
 
 ### Package Structure
 ```
-src/biz2bricks_core/
-├── __init__.py          # Public API exports
-├── db/
-│   ├── config.py        # DatabaseConfig (pydantic-settings)
-│   └── connection.py    # DatabaseManager singleton
-├── models/
-│   ├── base.py          # SQLAlchemy Base, enums (AuditAction, AuditEntityType)
-│   ├── core.py          # OrganizationModel, UserModel, FolderModel
-│   ├── documents.py     # DocumentModel, AuditLogModel
-│   ├── usage.py         # Usage tracking models
-│   └── ai.py            # AI processing models (jobs, generations, memory, RAG)
-└── services/
-    └── usage_service.py # UsageService singleton
+biz2bricks_core/
+├── alembic/                 # Database migrations
+│   ├── env.py               # Async migration environment
+│   └── versions/            # Migration scripts
+├── alembic.ini              # Alembic configuration
+└── src/biz2bricks_core/
+    ├── __init__.py          # Public API exports
+    ├── db/
+    │   ├── config.py        # DatabaseConfig (pydantic-settings)
+    │   └── connection.py    # DatabaseManager singleton
+    ├── models/
+    │   ├── base.py          # SQLAlchemy Base, enums (AuditAction, AuditEntityType)
+    │   ├── core.py          # OrganizationModel, UserModel, FolderModel
+    │   ├── documents.py     # DocumentModel, AuditLogModel
+    │   ├── usage.py         # Usage tracking models
+    │   └── ai.py            # AI processing models (jobs, generations, memory, RAG)
+    └── services/
+        └── usage_service.py # UsageService singleton
 ```
 
 ### Key Design Patterns
@@ -61,6 +73,13 @@ src/biz2bricks_core/
 - Atomic updates with `SELECT FOR UPDATE` to prevent race conditions
 - Non-blocking token logging (failures logged but don't propagate)
 - Storage tiers: free (100MB), starter (1GB), pro (10GB), business (100GB)
+
+**Database Migrations** (`alembic/`):
+- Uses Alembic with async engine for PostgreSQL (asyncpg)
+- `env.py` loads DATABASE_URL from environment variables (supports `.env` files)
+- Migration scripts in `alembic/versions/` with autogenerate support
+- Initial schema migration (`001`) creates all tables
+- Run `alembic upgrade head` to apply migrations before first use
 
 ### Database Models
 
