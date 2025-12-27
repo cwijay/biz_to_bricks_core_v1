@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import String, Text, Boolean, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from biz2bricks_core.models.base import Base
@@ -47,9 +47,9 @@ class OrganizationModel(Base):
         nullable=False,
     )
 
-    # Subscription plan reference (for tiered pricing)
-    plan_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("subscription_plans.id"), nullable=True
+    # Subscription tier reference (for tiered pricing)
+    plan_id = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subscription_tiers.id"), nullable=True
     )
     subscription_status: Mapped[str] = mapped_column(
         String(20), default="active", nullable=False
