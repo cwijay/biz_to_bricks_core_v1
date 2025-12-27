@@ -4,9 +4,10 @@ Biz2Bricks Core Library.
 Shared components for Biz2Bricks applications:
 - SQLAlchemy models (organizations, users, folders, documents, audit_logs)
 - AI processing models (processing_jobs, document_generations, memory, RAG)
+- Usage tracking models (subscription_tiers, organization_subscriptions, usage records)
+- RAG caching models (rag_query_cache with pgvector)
 - DatabaseManager for async PostgreSQL connections (Cloud SQL + direct)
 - Alembic migrations for schema management
-- UsageService for usage tracking and limit enforcement
 """
 
 __version__ = "0.1.0"
@@ -29,21 +30,23 @@ from biz2bricks_core.models import (
     MemoryEntryModel,
     FileSearchStoreModel,
     DocumentFolderModel,
-)
-from biz2bricks_core.models.usage import (
-    SubscriptionPlanModel,
-    UsageEventModel,
-    UsageDailySummaryModel,
-    UsageLimitsModel,
-    ModelPricingModel,
+    # Usage tracking models
+    SubscriptionTierModel,
+    OrganizationSubscriptionModel,
+    TokenUsageRecordModel,
+    ResourceUsageRecordModel,
+    UsageAggregationModel,
+    SubscriptionTier,
+    OrganizationSubscription,
+    TokenUsageRecord,
+    ResourceUsageRecord,
+    UsageAggregation,
+    # RAG cache models
+    RAGQueryCacheModel,
+    RAGQueryCache,
+    PGVECTOR_AVAILABLE,
 )
 from biz2bricks_core.db import DatabaseManager, db, get_session
-from biz2bricks_core.services import (
-    UsageService,
-    usage_service,
-    StorageLimitResult,
-    TokenLimitResult,
-)
 
 __all__ = [
     # Version
@@ -65,19 +68,23 @@ __all__ = [
     "MemoryEntryModel",
     "FileSearchStoreModel",
     "DocumentFolderModel",
-    # Usage Models
-    "SubscriptionPlanModel",
-    "UsageEventModel",
-    "UsageDailySummaryModel",
-    "UsageLimitsModel",
-    "ModelPricingModel",
+    # Usage Tracking Models
+    "SubscriptionTierModel",
+    "OrganizationSubscriptionModel",
+    "TokenUsageRecordModel",
+    "ResourceUsageRecordModel",
+    "UsageAggregationModel",
+    "SubscriptionTier",
+    "OrganizationSubscription",
+    "TokenUsageRecord",
+    "ResourceUsageRecord",
+    "UsageAggregation",
+    # RAG Cache Models
+    "RAGQueryCacheModel",
+    "RAGQueryCache",
+    "PGVECTOR_AVAILABLE",
     # Database
     "DatabaseManager",
     "db",
     "get_session",
-    # Services
-    "UsageService",
-    "usage_service",
-    "StorageLimitResult",
-    "TokenLimitResult",
 ]

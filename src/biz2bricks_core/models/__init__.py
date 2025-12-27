@@ -8,13 +8,6 @@ Core tables shared across Biz2Bricks applications:
 - Documents: Document metadata (files stored in GCS)
 - AuditLogs: Audit trail for all system events
 
-Usage tracking tables:
-- UsageEvents: Individual LLM API call tracking
-- UsageDailySummary: Daily rollups for billing
-- UsageLimits: Organization limits and credits
-- ModelPricing: LLM model pricing lookup
-- SubscriptionPlans: Tiered pricing plans
-
 AI processing tables:
 - ProcessingJobs: Document processing job tracking
 - DocumentGenerations: Generated content cache (summaries, FAQs, questions)
@@ -23,18 +16,21 @@ AI processing tables:
 - MemoryEntries: Generic key-value memory storage
 - FileSearchStores: Gemini File Search store registry
 - DocumentFolders: Document folder hierarchy for RAG
+
+Usage tracking tables:
+- SubscriptionTiers: Admin-editable tier configuration (Free, Pro, Enterprise)
+- OrganizationSubscriptions: Per-org subscription state and usage counters
+- TokenUsageRecords: Granular token usage logs for analytics
+- ResourceUsageRecords: Non-token resource tracking (LlamaParse, file search)
+- UsageAggregations: Pre-computed rollups for dashboards
+
+RAG caching tables:
+- RAGQueryCache: Semantic cache for RAG queries using pgvector
 """
 
 from biz2bricks_core.models.base import Base, AuditAction, AuditEntityType
 from biz2bricks_core.models.core import OrganizationModel, UserModel, FolderModel
 from biz2bricks_core.models.documents import DocumentModel, AuditLogModel
-from biz2bricks_core.models.usage import (
-    UsageEventModel,
-    UsageDailySummaryModel,
-    UsageLimitsModel,
-    ModelPricingModel,
-    SubscriptionPlanModel,
-)
 from biz2bricks_core.models.ai import (
     ProcessingJobModel,
     DocumentGenerationModel,
@@ -43,6 +39,24 @@ from biz2bricks_core.models.ai import (
     MemoryEntryModel,
     FileSearchStoreModel,
     DocumentFolderModel,
+)
+from biz2bricks_core.models.usage import (
+    SubscriptionTierModel,
+    OrganizationSubscriptionModel,
+    TokenUsageRecordModel,
+    ResourceUsageRecordModel,
+    UsageAggregationModel,
+    # Aliases
+    SubscriptionTier,
+    OrganizationSubscription,
+    TokenUsageRecord,
+    ResourceUsageRecord,
+    UsageAggregation,
+)
+from biz2bricks_core.models.rag import (
+    RAGQueryCacheModel,
+    RAGQueryCache,
+    PGVECTOR_AVAILABLE,
 )
 
 __all__ = [
@@ -57,12 +71,6 @@ __all__ = [
     # Document models
     "DocumentModel",
     "AuditLogModel",
-    # Usage tracking models
-    "UsageEventModel",
-    "UsageDailySummaryModel",
-    "UsageLimitsModel",
-    "ModelPricingModel",
-    "SubscriptionPlanModel",
     # AI processing models
     "ProcessingJobModel",
     "DocumentGenerationModel",
@@ -71,4 +79,19 @@ __all__ = [
     "MemoryEntryModel",
     "FileSearchStoreModel",
     "DocumentFolderModel",
+    # Usage tracking models
+    "SubscriptionTierModel",
+    "OrganizationSubscriptionModel",
+    "TokenUsageRecordModel",
+    "ResourceUsageRecordModel",
+    "UsageAggregationModel",
+    "SubscriptionTier",
+    "OrganizationSubscription",
+    "TokenUsageRecord",
+    "ResourceUsageRecord",
+    "UsageAggregation",
+    # RAG cache models
+    "RAGQueryCacheModel",
+    "RAGQueryCache",
+    "PGVECTOR_AVAILABLE",
 ]

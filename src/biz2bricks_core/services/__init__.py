@@ -1,19 +1,9 @@
 """
 Biz2Bricks Core Services.
 
-Shared service layer for usage tracking, limits, and billing.
+Shared service layer for common business logic.
+
+Note: Usage tracking services have been moved to doc_intelligence_ai_v3.0.
 """
 
-from biz2bricks_core.services.usage_service import (
-    UsageService,
-    usage_service,
-    StorageLimitResult,
-    TokenLimitResult,
-)
-
-__all__ = [
-    "UsageService",
-    "usage_service",
-    "StorageLimitResult",
-    "TokenLimitResult",
-]
+__all__ = []

@@ -1,355 +1,334 @@
 """
-Usage tracking and subscription models.
+SQLAlchemy models for usage tracking and quota management.
 
-Tables for tracking platform usage by tokens and managing tiered subscription plans.
+Tables:
+- subscription_tiers: Admin-editable tier configuration
+- organization_subscriptions: Per-org subscription state and usage counters
+- token_usage_records: Granular token usage logs for analytics
+- resource_usage_records: Non-token resource tracking (LlamaParse, file search)
+- usage_aggregations: Pre-computed rollups for dashboards
 """
 
-from datetime import datetime, date
+import uuid
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any
-from uuid import uuid4
+from typing import Optional
 
-from sqlalchemy import String, Integer, BigInteger, Boolean, Date, ForeignKey, Index, Numeric
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (
+    Column,
+    String,
+    Text,
+    DateTime,
+    Integer,
+    BigInteger,
+    Boolean,
+    Numeric,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
 
 from biz2bricks_core.models.base import Base
 
 
-class SubscriptionPlanModel(Base):
+class SubscriptionTierModel(Base):
     """
-    Subscription plan definitions for tiered pricing.
+    Admin-editable subscription tier configuration.
 
-    Plans: Free, Starter ($29), Pro ($99), Business ($299)
+    Stores tier limits and pricing for Free, Pro, and Enterprise plans.
+    All limits are editable via admin UI without code changes.
     """
+    __tablename__ = "subscription_tiers"
 
-    __tablename__ = "subscription_plans"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tier = Column(String(50), unique=True, nullable=False)  # free, pro, enterprise
+    display_name = Column(String(100), nullable=False)
+    description = Column(Text)
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
-    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Token limits
+    monthly_token_limit = Column(BigInteger, nullable=False, default=50000)
 
-    # Pricing (in cents to avoid floating point issues)
-    monthly_price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    annual_price_cents: Mapped[Optional[int]] = mapped_column(Integer)
+    # Document processing limits
+    monthly_llamaparse_pages = Column(Integer, nullable=False, default=50)
+    monthly_file_search_queries = Column(Integer, nullable=False, default=100)
+    storage_gb_limit = Column(Numeric(10, 2), nullable=False, default=Decimal("1.0"))
 
-    # Limits
-    monthly_token_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    max_users: Mapped[Optional[int]] = mapped_column(Integer)  # NULL = unlimited
-    max_documents: Mapped[Optional[int]] = mapped_column(Integer)  # NULL = unlimited
-    max_storage_mb: Mapped[Optional[int]] = mapped_column(Integer)  # NULL = unlimited
+    # Rate limits
+    requests_per_minute = Column(Integer, default=60)
+    requests_per_day = Column(Integer, default=10000)
+    max_file_size_mb = Column(Integer, default=50)
+    max_concurrent_jobs = Column(Integer, default=5)
 
-    # Features (JSONB for flexibility)
-    features: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    # Feature flags (JSONB for flexibility)
+    features = Column(JSONB, default=dict)
+    # Example: {"rag_enabled": true, "custom_models": false, "priority_support": true}
 
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
-    )
+    # Pricing (for display, Stripe is source of truth in Phase 2)
+    monthly_price_usd = Column(Numeric(10, 2), default=Decimal("0.00"))
+    annual_price_usd = Column(Numeric(10, 2), default=Decimal("0.00"))
+
+    # Stripe integration (Phase 2)
+    stripe_product_id = Column(String(100))
+    stripe_monthly_price_id = Column(String(100))
+    stripe_annual_price_id = Column(String(100))
+
+    # Lifecycle
+    is_active = Column(Boolean, default=True)  # Soft delete
+    sort_order = Column(Integer, default=0)  # Display order
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    subscriptions = relationship("OrganizationSubscriptionModel", back_populates="tier")
 
     __table_args__ = (
-        Index("idx_subscription_plans_name", "name"),
-        Index("idx_subscription_plans_active", "is_active"),
+        {'extend_existing': True},
     )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "name": self.name,
-            "display_name": self.display_name,
-            "monthly_price_cents": self.monthly_price_cents,
-            "annual_price_cents": self.annual_price_cents,
-            "monthly_token_limit": self.monthly_token_limit,
-            "max_users": self.max_users,
-            "max_documents": self.max_documents,
-            "max_storage_mb": self.max_storage_mb,
-            "features": self.features,
-            "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+    def __repr__(self):
+        return f"<SubscriptionTier(tier='{self.tier}', tokens={self.monthly_token_limit})>"
 
 
-class UsageEventModel(Base):
+class OrganizationSubscriptionModel(Base):
     """
-    Individual LLM API call tracking.
+    Per-organization subscription state and usage counters.
 
-    Records every API call with token counts and costs for billing and analytics.
+    Tracks subscription tier, billing period, and current period usage.
+    Usage counters are atomically incremented via SQL for thread safety.
     """
+    __tablename__ = "organization_subscriptions"
 
-    __tablename__ = "usage_events"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Note: organizations.id is VARCHAR(255), not UUID
+    organization_id = Column(String(255), ForeignKey("organizations.id"), unique=True, nullable=False)
+    tier_id = Column(UUID(as_uuid=True), ForeignKey("subscription_tiers.id"), nullable=False)
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    organization_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
-    )
-    user_id: Mapped[Optional[str]] = mapped_column(String(36))
+    # Subscription state
+    status = Column(String(50), default="active")  # active, past_due, canceled, trialing
+    billing_cycle = Column(String(20), default="monthly")  # monthly, annual
 
-    # Request details
-    request_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
-    feature: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Billing period (monthly reset)
+    current_period_start = Column(DateTime, nullable=False, default=datetime.utcnow)
+    current_period_end = Column(DateTime, nullable=False)
 
-    # Token counts
-    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Usage counters (atomic updates via SQL)
+    tokens_used_this_period = Column(BigInteger, default=0)
+    llamaparse_pages_used = Column(Integer, default=0)
+    file_search_queries_used = Column(Integer, default=0)
+    storage_used_bytes = Column(BigInteger, default=0)
 
-    # Cost (in USD with high precision)
-    input_cost: Mapped[Decimal] = mapped_column(Numeric(12, 8), default=0)
-    output_cost: Mapped[Decimal] = mapped_column(Numeric(12, 8), default=0)
+    # Denormalized limits (allows custom limits per org, quick access)
+    monthly_token_limit = Column(BigInteger, nullable=False)
+    monthly_llamaparse_pages_limit = Column(Integer, nullable=False)
+    monthly_file_search_queries_limit = Column(Integer, nullable=False)
+    storage_limit_bytes = Column(BigInteger, nullable=False)
 
-    # Extra data (JSONB column named 'metadata' in DB)
-    extra_data: Mapped[Dict[str, Any]] = mapped_column(
-        "metadata", JSONB, default=dict, nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
-    )
+    # Stripe references (Phase 2)
+    stripe_customer_id = Column(String(100), unique=True, index=True)
+    stripe_subscription_id = Column(String(100), unique=True, index=True)
+
+    # Trial
+    trial_end = Column(DateTime)
+    canceled_at = Column(DateTime)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    tier = relationship("SubscriptionTierModel", back_populates="subscriptions")
 
     __table_args__ = (
-        Index("idx_usage_events_org_created", "organization_id", "created_at"),
-        Index("idx_usage_events_org_feature", "organization_id", "feature"),
-        Index("idx_usage_events_user", "user_id", "created_at"),
-        Index("idx_usage_events_request_id", "request_id"),
+        Index('idx_org_sub_period_end', 'current_period_end'),
+        Index('idx_org_sub_status', 'status'),
+        {'extend_existing': True},
     )
+
+    def __repr__(self):
+        return f"<OrganizationSubscription(org='{self.organization_id}', status='{self.status}')>"
 
     @property
-    def total_tokens(self) -> int:
-        """Calculate total tokens."""
-        return self.input_tokens + self.output_tokens
+    def tokens_remaining(self) -> int:
+        """Calculate remaining tokens for current period."""
+        return max(0, self.monthly_token_limit - self.tokens_used_this_period)
 
     @property
-    def total_cost(self) -> Decimal:
-        """Calculate total cost."""
-        return self.input_cost + self.output_cost
+    def tokens_percentage_used(self) -> float:
+        """Calculate percentage of tokens used."""
+        if self.monthly_token_limit == 0:
+            return 100.0
+        return round((self.tokens_used_this_period / self.monthly_token_limit) * 100, 2)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "organization_id": self.organization_id,
-            "user_id": self.user_id,
-            "request_id": self.request_id,
-            "feature": self.feature,
-            "model": self.model,
-            "provider": self.provider,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cached_tokens": self.cached_tokens,
-            "total_tokens": self.total_tokens,
-            "input_cost": float(self.input_cost),
-            "output_cost": float(self.output_cost),
-            "total_cost": float(self.total_cost),
-            "metadata": self.extra_data,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
+    @property
+    def is_quota_exceeded(self) -> bool:
+        """Check if any quota is exceeded."""
+        return (
+            self.tokens_used_this_period >= self.monthly_token_limit or
+            self.llamaparse_pages_used >= self.monthly_llamaparse_pages_limit or
+            self.file_search_queries_used >= self.monthly_file_search_queries_limit or
+            self.storage_used_bytes >= self.storage_limit_bytes
+        )
 
 
-class UsageDailySummaryModel(Base):
+class TokenUsageRecordModel(Base):
     """
-    Daily usage rollups for fast queries and billing.
+    Granular token usage logs for analytics and audit.
 
-    Aggregated from usage_events by a scheduled job.
+    Records actual token counts from LLM responses (not estimates).
+    Supports deduplication via request_id for idempotent logging.
     """
+    __tablename__ = "token_usage_records"
 
-    __tablename__ = "usage_daily_summary"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(String(255), ForeignKey("organizations.id"), nullable=False)
+    user_id = Column(String(255), ForeignKey("users.id"), nullable=True)
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    organization_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
-    )
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Request identification
+    request_id = Column(String(100), unique=True)  # Idempotency key
+    session_id = Column(String(100), index=True)
 
-    # Aggregated counts
-    total_requests: Mapped[int] = mapped_column(Integer, default=0)
-    total_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
-    total_output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
-    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
-    total_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    # Usage details
+    feature = Column(String(50), nullable=False, index=True)  # document_agent, sheets_agent, rag_search
+    provider = Column(String(50))  # openai, google
+    model = Column(String(100))  # gpt-5.1-codex-mini, gemini-3-flash-preview
 
-    # Breakdown by feature
-    feature_breakdown: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # ACTUAL token counts from LLM response
+    input_tokens = Column(Integer, nullable=False)
+    output_tokens = Column(Integer, nullable=False)
+    total_tokens = Column(Integer, nullable=False)
+    cached_tokens = Column(Integer, default=0)
 
-    # Breakdown by model
-    model_breakdown: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Cost tracking
+    input_cost_usd = Column(Numeric(12, 8))
+    output_cost_usd = Column(Numeric(12, 8))
+    total_cost_usd = Column(Numeric(12, 8))
 
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
-    )
+    # Metadata (named extra_metadata to avoid SQLAlchemy reserved name conflict)
+    extra_metadata = Column("metadata", JSONB, default=dict)  # document_name, query preview, etc.
+    processing_time_ms = Column(Integer)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     __table_args__ = (
-        Index("idx_usage_daily_org_date", "organization_id", "date"),
-        Index(
-            "idx_usage_daily_unique",
-            "organization_id",
-            "date",
-            unique=True,
-        ),
+        Index('idx_usage_org_created', 'organization_id', 'created_at'),
+        Index('idx_usage_org_feature', 'organization_id', 'feature', 'created_at'),
+        {'extend_existing': True},
     )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "organization_id": self.organization_id,
-            "date": self.date.isoformat() if self.date else None,
-            "total_requests": self.total_requests,
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "total_tokens": self.total_tokens,
-            "total_cost": float(self.total_cost),
-            "feature_breakdown": self.feature_breakdown,
-            "model_breakdown": self.model_breakdown,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
+    def __repr__(self):
+        return f"<TokenUsageRecord(feature='{self.feature}', tokens={self.total_tokens})>"
 
 
-class UsageLimitsModel(Base):
+class ResourceUsageRecordModel(Base):
     """
-    Organization usage limits and credits.
+    Non-token resource usage tracking.
 
-    Tracks limits based on subscription plan and credit balance.
+    Tracks LlamaParse pages, file search queries, storage changes.
     """
+    __tablename__ = "resource_usage_records"
 
-    __tablename__ = "usage_limits"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(String(255), ForeignKey("organizations.id"), nullable=False)
+    user_id = Column(String(255), ForeignKey("users.id"), nullable=True)
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    organization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
+    # Resource type and quantity
+    resource_type = Column(String(50), nullable=False)  # llamaparse_pages, file_search_queries, storage_bytes
+    amount = Column(Integer, nullable=False)
 
-    # Plan-based limits (null = unlimited)
-    monthly_token_limit: Mapped[Optional[int]] = mapped_column(BigInteger)
-    monthly_request_limit: Mapped[Optional[int]] = mapped_column(Integer)
+    # Context
+    request_id = Column(String(100))
+    file_name = Column(String(500))
+    file_path = Column(Text)
+    extra_metadata = Column("metadata", JSONB, default=dict)
 
-    # Credit system (prepaid tokens)
-    credit_balance: Mapped[int] = mapped_column(BigInteger, default=0)
-    credit_used_this_period: Mapped[int] = mapped_column(BigInteger, default=0)
-
-    # Storage tracking (in bytes for precision)
-    storage_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
-    storage_limit_bytes: Mapped[Optional[int]] = mapped_column(BigInteger)  # Cached from plan
-
-    # Billing period
-    billing_cycle_start: Mapped[Optional[date]] = mapped_column(Date)
-    billing_cycle_end: Mapped[Optional[date]] = mapped_column(Date)
-
-    # Alerts
-    alert_threshold_percent: Mapped[int] = mapped_column(Integer, default=80)
-    alert_sent_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True))
-
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
-    )
-
-    __table_args__ = (Index("idx_usage_limits_org", "organization_id"),)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "organization_id": self.organization_id,
-            "monthly_token_limit": self.monthly_token_limit,
-            "monthly_request_limit": self.monthly_request_limit,
-            "credit_balance": self.credit_balance,
-            "credit_used_this_period": self.credit_used_this_period,
-            "storage_used_bytes": self.storage_used_bytes,
-            "storage_limit_bytes": self.storage_limit_bytes,
-            "billing_cycle_start": (
-                self.billing_cycle_start.isoformat()
-                if self.billing_cycle_start
-                else None
-            ),
-            "billing_cycle_end": (
-                self.billing_cycle_end.isoformat() if self.billing_cycle_end else None
-            ),
-            "alert_threshold_percent": self.alert_threshold_percent,
-            "alert_sent_at": (
-                self.alert_sent_at.isoformat() if self.alert_sent_at else None
-            ),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
-
-
-class ModelPricingModel(Base):
-    """
-    LLM model pricing lookup table.
-
-    Stores pricing per model/provider for cost calculation.
-    """
-
-    __tablename__ = "model_pricing"
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
-
-    # Price per 1M tokens (in USD)
-    input_price_per_million: Mapped[Decimal] = mapped_column(
-        Numeric(10, 4), nullable=False
-    )
-    output_price_per_million: Mapped[Decimal] = mapped_column(
-        Numeric(10, 4), nullable=False
-    )
-    cached_price_per_million: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=0)
-
-    # Validity period
-    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
-    effective_to: Mapped[Optional[date]] = mapped_column(Date)  # NULL = current pricing
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        Index("idx_model_pricing_lookup", "provider", "model", "effective_from"),
-        Index(
-            "idx_model_pricing_unique",
-            "provider",
-            "model",
-            "effective_from",
-            unique=True,
-        ),
+        Index('idx_resource_org_type', 'organization_id', 'resource_type', 'created_at'),
+        {'extend_existing': True},
     )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "provider": self.provider,
-            "model": self.model,
-            "input_price_per_million": float(self.input_price_per_million),
-            "output_price_per_million": float(self.output_price_per_million),
-            "cached_price_per_million": float(self.cached_price_per_million),
-            "effective_from": (
-                self.effective_from.isoformat() if self.effective_from else None
-            ),
-            "effective_to": (
-                self.effective_to.isoformat() if self.effective_to else None
-            ),
-        }
+    def __repr__(self):
+        return f"<ResourceUsageRecord(type='{self.resource_type}', amount={self.amount})>"
+
+
+class UsageAggregationModel(Base):
+    """
+    Pre-computed usage aggregations for dashboard performance.
+
+    Daily and monthly rollups for quick reporting without
+    scanning all token_usage_records.
+    """
+    __tablename__ = "usage_aggregations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(String(255), ForeignKey("organizations.id"), nullable=False)
+
+    # Time bucket
+    period_type = Column(String(20), nullable=False)  # daily, monthly
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+
+    # Token aggregates
+    total_tokens = Column(BigInteger, default=0)
+    total_input_tokens = Column(BigInteger, default=0)
+    total_output_tokens = Column(BigInteger, default=0)
+    total_cached_tokens = Column(BigInteger, default=0)
+
+    # Feature breakdown
+    document_agent_tokens = Column(BigInteger, default=0)
+    sheets_agent_tokens = Column(BigInteger, default=0)
+    rag_tokens = Column(BigInteger, default=0)
+
+    # Resource aggregates
+    llamaparse_pages = Column(Integer, default=0)
+    file_search_queries = Column(Integer, default=0)
+    storage_delta_bytes = Column(BigInteger, default=0)
+
+    # Cost aggregates
+    total_cost_usd = Column(Numeric(12, 4), default=Decimal("0.00"))
+
+    # Request stats
+    total_requests = Column(Integer, default=0)
+    successful_requests = Column(Integer, default=0)
+    failed_requests = Column(Integer, default=0)
+
+    # Breakdown by feature/model (JSONB for flexibility)
+    breakdown_by_feature = Column(JSONB, default=dict)
+    breakdown_by_model = Column(JSONB, default=dict)
+
+    aggregated_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('organization_id', 'period_type', 'period_start', name='uq_usage_agg_org_period'),
+        Index('idx_usage_agg_org_period', 'organization_id', 'period_type', 'period_start'),
+        {'extend_existing': True},
+    )
+
+    def __repr__(self):
+        return f"<UsageAggregation(org='{self.organization_id}', period='{self.period_type}', tokens={self.total_tokens})>"
+
+
+# Backwards-compatible aliases
+SubscriptionTier = SubscriptionTierModel
+OrganizationSubscription = OrganizationSubscriptionModel
+TokenUsageRecord = TokenUsageRecordModel
+ResourceUsageRecord = ResourceUsageRecordModel
+UsageAggregation = UsageAggregationModel
+
+__all__ = [
+    "SubscriptionTierModel",
+    "OrganizationSubscriptionModel",
+    "TokenUsageRecordModel",
+    "ResourceUsageRecordModel",
+    "UsageAggregationModel",
+    # Aliases
+    "SubscriptionTier",
+    "OrganizationSubscription",
+    "TokenUsageRecord",
+    "ResourceUsageRecord",
+    "UsageAggregation",
+]
