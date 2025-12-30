@@ -26,6 +26,10 @@ Usage tracking tables:
 
 RAG caching tables:
 - RAGQueryCache: Semantic cache for RAG queries using pgvector
+
+Bulk processing tables:
+- BulkJobs: Bulk document processing job tracking
+- BulkJobDocuments: Per-document status within bulk jobs
 """
 
 from biz2bricks_core.models.base import Base, AuditAction, AuditEntityType
@@ -59,6 +63,12 @@ from biz2bricks_core.models.rag import (
     PGVECTOR_AVAILABLE,
 )
 from biz2bricks_core.models.sessions import SessionModel, Session
+from biz2bricks_core.models.bulk import (
+    BulkJobModel,
+    BulkJobDocumentModel,
+    BulkJob,
+    BulkJobDocument,
+)
 
 __all__ = [
     # Base
@@ -98,4 +108,9 @@ __all__ = [
     # Session models
     "SessionModel",
     "Session",
+    # Bulk processing models
+    "BulkJobModel",
+    "BulkJobDocumentModel",
+    "BulkJob",
+    "BulkJobDocument",
 ]
