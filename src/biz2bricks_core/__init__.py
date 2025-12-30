@@ -45,6 +45,9 @@ from biz2bricks_core.models import (
     RAGQueryCacheModel,
     RAGQueryCache,
     PGVECTOR_AVAILABLE,
+    # Session models
+    SessionModel,
+    Session,
 )
 from biz2bricks_core.db import DatabaseManager, db, get_session
 
@@ -83,6 +86,9 @@ __all__ = [
     "RAGQueryCacheModel",
     "RAGQueryCache",
     "PGVECTOR_AVAILABLE",
+    # Session Models
+    "SessionModel",
+    "Session",
     # Database
     "DatabaseManager",
     "db",
