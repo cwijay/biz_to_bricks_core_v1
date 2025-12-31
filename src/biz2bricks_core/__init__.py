@@ -48,6 +48,11 @@ from biz2bricks_core.models import (
     # Session models
     SessionModel,
     Session,
+    # Bulk processing models
+    BulkJobModel,
+    BulkJobDocumentModel,
+    BulkJob,
+    BulkJobDocument,
 )
 from biz2bricks_core.db import DatabaseManager, db, get_session
 
@@ -89,6 +94,11 @@ __all__ = [
     # Session Models
     "SessionModel",
     "Session",
+    # Bulk Processing Models
+    "BulkJobModel",
+    "BulkJobDocumentModel",
+    "BulkJob",
+    "BulkJobDocument",
     # Database
     "DatabaseManager",
     "db",

@@ -32,11 +32,11 @@ from biz2bricks_core.models import Base
 from biz2bricks_core.models.core import OrganizationModel, UserModel, FolderModel
 from biz2bricks_core.models.documents import DocumentModel, AuditLogModel
 from biz2bricks_core.models.usage import (
-    UsageEventModel,
-    UsageDailySummaryModel,
-    UsageLimitsModel,
-    ModelPricingModel,
-    SubscriptionPlanModel,
+    SubscriptionTierModel,
+    OrganizationSubscriptionModel,
+    TokenUsageRecordModel,
+    ResourceUsageRecordModel,
+    UsageAggregationModel,
 )
 from biz2bricks_core.models.ai import (
     ProcessingJobModel,
@@ -47,6 +47,9 @@ from biz2bricks_core.models.ai import (
     FileSearchStoreModel,
     DocumentFolderModel,
 )
+from biz2bricks_core.models.sessions import SessionModel
+from biz2bricks_core.models.rag import RAGQueryCacheModel
+from biz2bricks_core.models.bulk import BulkJobModel, BulkJobDocumentModel
 
 # Set target metadata for autogenerate support
 target_metadata = Base.metadata
