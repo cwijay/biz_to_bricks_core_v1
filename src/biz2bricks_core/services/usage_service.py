@@ -26,9 +26,9 @@ from biz2bricks_core.models import (
     DocumentModel,
 )
 from biz2bricks_core.models.usage import (
-    UsageLimitsModel,
-    UsageEventModel,
-    SubscriptionPlanModel,
+    OrganizationSubscriptionModel,
+    TokenUsageRecordModel,
+    SubscriptionTierModel,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,10 +94,10 @@ class UsageService:
         async with db.session() as session:
             # Get org with plan info
             org_stmt = (
-                select(OrganizationModel, SubscriptionPlanModel)
+                select(OrganizationModel, SubscriptionTierModel)
                 .outerjoin(
-                    SubscriptionPlanModel,
-                    OrganizationModel.plan_id == SubscriptionPlanModel.id,
+                    SubscriptionTierModel,
+                    OrganizationModel.plan_id == SubscriptionTierModel.id,
                 )
                 .where(OrganizationModel.id == org_id)
             )
@@ -119,14 +119,14 @@ class UsageService:
             tier = org.plan_type or "free"
 
             # Get limit from plan or use default tier limits
-            if plan and plan.max_storage_mb:
-                limit_bytes = plan.max_storage_mb * 1024 * 1024
+            if plan and plan.storage_gb_limit:
+                limit_bytes = int(plan.storage_gb_limit * 1024 * 1024 * 1024)  # GB to bytes
             else:
                 limit_bytes = self.STORAGE_TIERS.get(tier, self.STORAGE_TIERS["free"])
 
             # Get current usage from usage_limits (pre-computed)
-            usage_stmt = select(UsageLimitsModel).where(
-                UsageLimitsModel.organization_id == org_id
+            usage_stmt = select(OrganizationSubscriptionModel).where(
+                OrganizationSubscriptionModel.organization_id == org_id
             )
             usage_result = await session.execute(usage_stmt)
             usage = usage_result.scalar_one_or_none()
@@ -170,8 +170,8 @@ class UsageService:
         async with db.session() as session:
             # Use FOR UPDATE to lock the row
             stmt = (
-                select(UsageLimitsModel)
-                .where(UsageLimitsModel.organization_id == org_id)
+                select(OrganizationSubscriptionModel)
+                .where(OrganizationSubscriptionModel.organization_id == org_id)
                 .with_for_update()
             )
             result = await session.execute(stmt)
@@ -183,7 +183,7 @@ class UsageService:
             else:
                 # Create usage_limits record if it doesn't exist
                 new_value = max(0, delta_bytes)
-                usage = UsageLimitsModel(
+                usage = OrganizationSubscriptionModel(
                     id=str(uuid4()),
                     organization_id=org_id,
                     storage_used_bytes=new_value,
@@ -216,7 +216,7 @@ class UsageService:
 
             # Upsert usage_limits
             stmt = (
-                insert(UsageLimitsModel)
+                insert(OrganizationSubscriptionModel)
                 .values(
                     id=str(uuid4()),
                     organization_id=org_id,
@@ -270,8 +270,7 @@ class UsageService:
         """
         try:
             async with db.session() as session:
-                event = UsageEventModel(
-                    id=str(uuid4()),
+                event = TokenUsageRecordModel(
                     organization_id=org_id,
                     user_id=user_id,
                     request_id=request_id,
@@ -280,10 +279,12 @@ class UsageService:
                     provider=provider,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
                     cached_tokens=cached_tokens,
-                    input_cost=input_cost,
-                    output_cost=output_cost,
-                    extra_data=extra_data or {},
+                    input_cost_usd=input_cost,
+                    output_cost_usd=output_cost,
+                    total_cost_usd=input_cost + output_cost,
+                    extra_metadata=extra_data or {},
                 )
                 session.add(event)
                 await session.flush()
@@ -313,16 +314,16 @@ class UsageService:
         async with db.session() as session:
             # Get usage limits with plan
             stmt = (
-                select(UsageLimitsModel, SubscriptionPlanModel)
+                select(OrganizationSubscriptionModel, SubscriptionTierModel)
                 .join(
                     OrganizationModel,
-                    UsageLimitsModel.organization_id == OrganizationModel.id,
+                    OrganizationSubscriptionModel.organization_id == OrganizationModel.id,
                 )
                 .outerjoin(
-                    SubscriptionPlanModel,
-                    OrganizationModel.plan_id == SubscriptionPlanModel.id,
+                    SubscriptionTierModel,
+                    OrganizationModel.plan_id == SubscriptionTierModel.id,
                 )
-                .where(UsageLimitsModel.organization_id == org_id)
+                .where(OrganizationSubscriptionModel.organization_id == org_id)
             )
             result = await session.execute(stmt)
             row = result.first()
@@ -341,7 +342,7 @@ class UsageService:
             monthly_limit = usage.monthly_token_limit or (
                 plan.monthly_token_limit if plan else None
             )
-            tokens_used = usage.credit_used_this_period or 0
+            tokens_used = usage.tokens_used_this_period or 0
 
             if monthly_limit is None:
                 return TokenLimitResult(
@@ -367,7 +368,7 @@ class UsageService:
 
     async def update_tokens_used(self, org_id: str, tokens: int) -> int:
         """
-        Update credit_used_this_period with token count.
+        Update tokens_used_this_period with token count.
 
         Args:
             org_id: Organization ID
@@ -378,22 +379,22 @@ class UsageService:
         """
         async with db.session() as session:
             stmt = (
-                select(UsageLimitsModel)
-                .where(UsageLimitsModel.organization_id == org_id)
+                select(OrganizationSubscriptionModel)
+                .where(OrganizationSubscriptionModel.organization_id == org_id)
                 .with_for_update()
             )
             result = await session.execute(stmt)
             usage = result.scalar_one_or_none()
 
             if usage:
-                new_value = (usage.credit_used_this_period or 0) + tokens
-                usage.credit_used_this_period = new_value
+                new_value = (usage.tokens_used_this_period or 0) + tokens
+                usage.tokens_used_this_period = new_value
             else:
                 new_value = tokens
-                usage = UsageLimitsModel(
+                usage = OrganizationSubscriptionModel(
                     id=str(uuid4()),
                     organization_id=org_id,
-                    credit_used_this_period=new_value,
+                    tokens_used_this_period=new_value,
                 )
                 session.add(usage)
 
