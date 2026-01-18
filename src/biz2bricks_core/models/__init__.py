@@ -30,6 +30,9 @@ RAG caching tables:
 Bulk processing tables:
 - BulkJobs: Bulk document processing job tracking
 - BulkJobDocuments: Per-document status within bulk jobs
+
+Intelligence report tables:
+- IntelligenceReports: Business intelligence report tracking and content
 """
 
 from biz2bricks_core.models.base import Base, AuditAction, AuditEntityType
@@ -68,6 +71,10 @@ from biz2bricks_core.models.bulk import (
     BulkJobDocumentModel,
     BulkJob,
     BulkJobDocument,
+)
+from biz2bricks_core.models.intelligence import (
+    IntelligenceReportModel,
+    IntelligenceReport,
 )
 
 __all__ = [
@@ -113,4 +120,7 @@ __all__ = [
     "BulkJobDocumentModel",
     "BulkJob",
     "BulkJobDocument",
+    # Intelligence report models
+    "IntelligenceReportModel",
+    "IntelligenceReport",
 ]
