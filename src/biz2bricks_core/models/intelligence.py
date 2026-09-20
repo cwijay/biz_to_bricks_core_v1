@@ -6,7 +6,7 @@ from datetime import datetime, date
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import String, Text, Integer, Date, ForeignKey, Index
+from sqlalchemy import String, Text, Integer, Date, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,7 +40,7 @@ class IntelligenceReportModel(Base):
     folder_id: Mapped[str] = mapped_column(String(36), nullable=False)
     report_type: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(
-        String(20), default="pending", nullable=False
+        String(20), default="pending", server_default="pending", nullable=False
     )  # pending, extracting, aggregating, analyzing, generating, completed, failed
 
     # Date range for report filtering
@@ -51,9 +51,11 @@ class IntelligenceReportModel(Base):
     options: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Processing metrics
-    document_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    document_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     extracted_record_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
+        Integer, default=0, server_default="0", nullable=False
     )
 
     # Generated content
@@ -80,7 +82,10 @@ class IntelligenceReportModel(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), default=datetime.utcnow, nullable=False
+        TIMESTAMP(timezone=True),
+        default=datetime.utcnow,
+        server_default=func.now(),
+        nullable=False,
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
