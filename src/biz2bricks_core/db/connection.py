@@ -27,6 +27,15 @@ from biz2bricks_core.db.config import db_config
 logger = logging.getLogger(__name__)
 
 
+class CloudSQLConnectionError(RuntimeError):
+    """Raised when a requested Cloud SQL connection cannot be established.
+
+    Setting USE_CLOUD_SQL_CONNECTOR names a specific instance, so there is no
+    safe fallback: a direct connection would resolve to DATABASE_URL or the
+    localhost defaults and silently target a different database. Fail closed.
+    """
+
+
 class DatabaseManager:
     """
     Manages async PostgreSQL connections with Cloud SQL connector support.
@@ -39,7 +48,6 @@ class DatabaseManager:
     _instance: Optional["DatabaseManager"] = None
     _initialized: bool = False
     _shutdown: bool = False
-    _tables_created: bool = False  # Track if tables have been created (once per process)
 
     # Per-loop resources: maps loop_id -> resource
     _connectors: Dict[int, Any] = {}
@@ -97,25 +105,10 @@ class DatabaseManager:
             f"pool_size={db_config.DB_POOL_SIZE}, connection={connection_type}"
         )
 
-        # Create tables on first engine setup
-        if not self._tables_created:
-            await self._ensure_tables()
-
-    async def _ensure_tables(self) -> None:
-        """Create all tables from model definitions if they don't exist."""
-        if self._tables_created:
-            return
-
-        from biz2bricks_core.models import Base
-
-        loop_id = self._get_loop_id()
-        engine = self._engines[loop_id]
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        self._tables_created = True
-        logger.info("Database tables created/verified")
+        # Schema is owned by Alembic and applied by the deploy-time migration
+        # step, not by connecting. create_all here could only ever add missing
+        # tables -- never alter an existing one -- so it silently produced
+        # schemas that diverged from the migrations.
 
     async def _create_cloud_sql_engine_async(self) -> Tuple[AsyncEngine, Any]:
         """Create engine and connector for Cloud SQL."""
@@ -158,26 +151,41 @@ class DatabaseManager:
                 )
                 await test_conn.close()
                 logger.info("Cloud SQL Connector test connection successful")
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Cloud SQL Connector timed out after {CLOUD_SQL_CONNECT_TIMEOUT}s. "
-                    f"Falling back to direct connection."
+            except asyncio.TimeoutError as e:
+                logger.error(
+                    f"Cloud SQL Connector timed out after {CLOUD_SQL_CONNECT_TIMEOUT}s "
+                    f"connecting to {db_config.CLOUD_SQL_INSTANCE}."
                 )
                 try:
-                    connector.close()
+                    if hasattr(connector, "close_async"):
+                        await connector.close_async()
+                    else:
+                        connector.close()
                 except Exception:
                     pass
-                return self._create_direct_engine(), None
+                raise CloudSQLConnectionError(
+                    f"Timed out after {CLOUD_SQL_CONNECT_TIMEOUT}s connecting to Cloud SQL "
+                    f"instance {db_config.CLOUD_SQL_INSTANCE}. Refusing to fall back to a "
+                    f"direct connection, which would target a different database."
+                ) from e
             except Exception as e:
-                logger.warning(
-                    f"Cloud SQL Connector failed ({type(e).__name__}: {e}). "
-                    f"Falling back to direct connection."
+                logger.error(
+                    f"Cloud SQL Connector failed for {db_config.CLOUD_SQL_INSTANCE} "
+                    f"({type(e).__name__}: {e})."
                 )
                 try:
-                    connector.close()
+                    if hasattr(connector, "close_async"):
+                        await connector.close_async()
+                    else:
+                        connector.close()
                 except Exception:
                     pass
-                return self._create_direct_engine(), None
+                raise CloudSQLConnectionError(
+                    f"Could not connect to Cloud SQL instance "
+                    f"{db_config.CLOUD_SQL_INSTANCE} ({type(e).__name__}: {e}). "
+                    f"Refusing to fall back to a direct connection, which would target "
+                    f"a different database."
+                ) from e
 
             async def getconn():
                 conn = await asyncio.wait_for(
@@ -207,10 +215,13 @@ class DatabaseManager:
             return engine, connector
 
         except ImportError as e:
-            logger.warning(
-                f"Cloud SQL connector not available ({e}), falling back to direct connection"
-            )
-            return self._create_direct_engine(), None
+            logger.error(f"Cloud SQL connector package not available ({e}).")
+            raise CloudSQLConnectionError(
+                f"USE_CLOUD_SQL_CONNECTOR is set for instance "
+                f"{db_config.CLOUD_SQL_INSTANCE} but the cloud-sql-python-connector "
+                f"package is not installed ({e}). Refusing to fall back to a direct "
+                f"connection, which would target a different database."
+            ) from e
 
     def _create_direct_engine(self) -> AsyncEngine:
         """Create engine with direct connection URL."""
@@ -302,7 +313,12 @@ class DatabaseManager:
             await session.close()
 
     async def create_tables(self):
-        """Create all tables (for development/testing)."""
+        """Create all tables directly from the models.
+
+        For local development and tests only. Deployed environments get their
+        schema from `alembic upgrade head`; this cannot alter existing tables
+        and will drift from the migrations if used against a real database.
+        """
         from biz2bricks_core.models import Base
 
         engine = await self.get_engine_async()

@@ -28,6 +28,7 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
+    "alembic>=1.13.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.8.0",
@@ -35,6 +36,10 @@ dev = [
 # Optional pgvector support for RAG semantic caching
 pgvector = [
     "pgvector>=0.2.0",
+]
+# Schema migrations; installed by the deploy-time migration step
+migrations = [
+    "alembic>=1.13.0",
 ]
 
 [build-system]
@@ -52,6 +57,7 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
